@@ -567,6 +567,25 @@
       min-height: 96px;
     }
 
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+
+    .toc a {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: var(--accent-dark);
+      background: rgba(109, 31, 22, 0.07);
+      border: 1px solid rgba(109, 31, 22, 0.12);
+      font-size: 13px;
+    }
+
     .markdown {
       color: #39271a;
       line-height: 1.8;
@@ -997,6 +1016,7 @@
         activeEpisodeIndex = 0;
       }
       const storyMarkdown = buildStoryMarkdown(story, activeEpisodeIndex);
+      const toc = buildMarkdownToc(storyMarkdown);
 
       resultEl.innerHTML = `
         <div class="result-card">
@@ -1021,6 +1041,7 @@
             <div class="history-actions result-toolbar">
               <button class="secondary" data-action="save-meta" data-story-id="${story.id}">保存标题与备注</button>
               <button class="ghost" data-action="reload-story" data-story-id="${story.id}">重新载入到表单</button>
+              <button class="ghost" data-action="copy-current-md">复制当前分集 MD</button>
               <button class="ghost" data-action="export-md">导出 MD</button>
               <button class="ghost" data-action="export-txt">导出 TXT</button>
               <button class="ghost" data-action="export-json">导出 JSON</button>
@@ -1030,6 +1051,11 @@
         </div>
         <div class="result-card">
           <h3>Markdown 阅读视图</h3>
+          ${toc.length ? `
+            <div class="toc">
+              ${toc.map(item => `<a href="#${escapeHtml(item.id)}">${escapeHtml(item.label)}</a>`).join("")}
+            </div>
+          ` : ""}
           <div class="episode-tabs">
             ${episodes.map((_, index) => `
               <button class="episode-tab ${index === activeEpisodeIndex ? "active" : ""}" data-episode-index="${index}">
@@ -1067,6 +1093,17 @@
       const exportMdButton = resultEl.querySelector('[data-action="export-md"]');
       if (exportMdButton) {
         exportMdButton.addEventListener("click", () => exportStory("md"));
+      }
+
+      const copyCurrentMdButton = resultEl.querySelector('[data-action="copy-current-md"]');
+      if (copyCurrentMdButton) {
+        copyCurrentMdButton.addEventListener("click", async () => {
+          try {
+            await copyCurrentEpisodeMarkdown();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
       }
 
       const exportTxtButton = resultEl.querySelector('[data-action="export-txt"]');
@@ -1151,6 +1188,7 @@
     function renderMarkdown(markdown) {
       const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
       const html = [];
+      const headingIdCounts = new Map();
       let paragraph = [];
       let listItems = [];
       let quoteLines = [];
@@ -1181,6 +1219,13 @@
         quoteLines = [];
       }
 
+      function getHeadingId(text) {
+        const baseId = slugifyHeading(text);
+        const count = headingIdCounts.get(baseId) || 0;
+        headingIdCounts.set(baseId, count + 1);
+        return count === 0 ? baseId : `${baseId}-${count + 1}`;
+      }
+
       for (const rawLine of lines) {
         const line = rawLine.trimEnd();
         if (line.startsWith("```")) {
@@ -1208,21 +1253,21 @@
           flushParagraph();
           flushList();
           flushQuote();
-          html.push(`<h3>${formatInlineMarkdown(trimmed.slice(4))}</h3>`);
+          html.push(`<h3 id="${escapeHtml(getHeadingId(trimmed.slice(4)))}">${formatInlineMarkdown(trimmed.slice(4))}</h3>`);
           continue;
         }
         if (trimmed.startsWith("## ")) {
           flushParagraph();
           flushList();
           flushQuote();
-          html.push(`<h2>${formatInlineMarkdown(trimmed.slice(3))}</h2>`);
+          html.push(`<h2 id="${escapeHtml(getHeadingId(trimmed.slice(3)))}">${formatInlineMarkdown(trimmed.slice(3))}</h2>`);
           continue;
         }
         if (trimmed.startsWith("# ")) {
           flushParagraph();
           flushList();
           flushQuote();
-          html.push(`<h1>${formatInlineMarkdown(trimmed.slice(2))}</h1>`);
+          html.push(`<h1 id="${escapeHtml(getHeadingId(trimmed.slice(2)))}">${formatInlineMarkdown(trimmed.slice(2))}</h1>`);
           continue;
         }
         if (trimmed.startsWith("- ")) {
@@ -1245,6 +1290,31 @@
       flushQuote();
       flushCode();
       return html.join("");
+    }
+
+    function slugifyHeading(text) {
+      return String(text || "")
+        .toLowerCase()
+        .replace(/[^\u4e00-\u9fa5a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "section";
+    }
+
+    function buildMarkdownToc(markdown) {
+      const seen = new Map();
+      return String(markdown || "")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => /^#{1,3}\s+/.test(line))
+        .map(line => {
+          const label = line.replace(/^#{1,3}\s+/, "");
+          const baseId = slugifyHeading(label);
+          const count = seen.get(baseId) || 0;
+          seen.set(baseId, count + 1);
+          return {
+            label,
+            id: count === 0 ? baseId : `${baseId}-${count + 1}`
+          };
+        });
     }
 
     function buildStoryMarkdown(story, episodeIndex = 0) {
@@ -1304,6 +1374,26 @@
       ].join("\n");
     }
 
+    function buildCurrentEpisodeMarkdown(story, episodeIndex = 0) {
+      const data = story.result || {};
+      const plans = Array.isArray(data.episode_plans) ? data.episode_plans : [];
+      const episodes = Array.isArray(data.episodes) ? data.episodes : [];
+      const activePlan = plans[episodeIndex] || {};
+      const activeEpisode = episodes[episodeIndex] || "暂无剧本文本";
+      return [
+        `# ${story.title || "未命名剧本"}`,
+        "",
+        `## 第${episodeIndex + 1}集${activePlan.title ? `《${activePlan.title}》` : ""}`,
+        "",
+        activePlan.goal ? `- 本集目标：${activePlan.goal}` : "",
+        activePlan.hook ? `- 本集钩子：${activePlan.hook}` : "",
+        "",
+        "```text",
+        activeEpisode,
+        "```"
+      ].filter(Boolean).join("\n");
+    }
+
     function downloadFile(filename, content, mimeType) {
       const blob = new Blob([content], { type: mimeType });
       const url = URL.createObjectURL(blob);
@@ -1331,6 +1421,23 @@
       }
       downloadFile(`${baseName}.json`, JSON.stringify(currentStory, null, 2), "application/json;charset=utf-8");
       setStatus("已导出 JSON");
+    }
+
+    async function copyCurrentEpisodeMarkdown() {
+      if (!currentStory) return;
+      const content = buildCurrentEpisodeMarkdown(currentStory, activeEpisodeIndex);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(content);
+        setStatus("当前分集 Markdown 已复制");
+        return;
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+      setStatus("当前分集 Markdown 已复制");
     }
 
     async function saveStoryMeta(storyId) {
