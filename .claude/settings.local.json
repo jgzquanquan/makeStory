@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile make_story/agents.py && echo \"语法检查通过\")",
+      "Bash(pip install:*)",
+      "Bash(python --version && pip --version)",
+      "Bash(conda env:*)",
+      "Read(//usr/bin/**)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && pip install langgraph langchain openai pydantic python-dotenv tenacity tiktoken rich typer)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && OPENAI_API_KEY=\"sk-sp-68d029c1f1bf45d4894f60c432e3b1e3\" BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" MODEL_NAME=\"qwen-turbo\" python -m make_story.run generate --topic \"都市甜宠\" --constraints \"抖音短剧，快节奏\" --num-episodes 2 --max-iterations 1)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && OPENAI_API_KEY=\"sk-sp-68d029c1f1bf45d4894f60c432e3b1e3\" BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" MODEL_NAME=\"qwen-turbo\" python -m make_story.run --help)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && OPENAI_API_KEY=\"sk-sp-68d029c1f1bf45d4894f60c432e3b1e3\" BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" MODEL_NAME=\"qwen-turbo\" python -m make_story.run --topic \"都市甜宠\" --constraints \"抖音短剧，快节奏\" --num-episodes 2 --max-iterations 1)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && OPENAI_API_KEY=\"sk-sp-68d029c1f1bf45d4894f60c432e3b1e3\" BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" MODEL_NAME=\"qwen-coder-plus\" python -m make_story.run --topic \"都市甜宠\" --constraints \"抖音短剧，快节奏\" --num-episodes 2 --max-iterations 1)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && python -c \"\nfrom openai import OpenAI\nclient = OpenAI\\(\n    api_key='sk-sp-68d029c1f1bf45d4894f60c432e3b1e3',\n    base_url='https://coding.dashscope.aliyuncs.com/v1'\n\\)\nmodels = client.models.list\\(\\)\nfor m in models.data:\n    print\\(m.id\\)\n\")",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && OPENAI_API_KEY=\"sk-sp-68d029c1f1bf45d4894f60c432e3b1e3\" BASE_URL=\"https://coding.dashscope.aliyuncs.com/v1\" MODEL_NAME=\"qwen3-max-2026-01-23\" python -m make_story.run --topic \"都市甜宠\" --constraints \"抖音短剧，快节奏\" --num-episodes 2 --max-iterations 1)",
+      "Bash(source /Users/jgz/anaconda3/bin/activate py312 && python -m make_story.run --topic \"古装权谋\" --constraints \"宫廷斗争，反转密集，爽剧节奏\" --num-episodes 3 --max-iterations 1)"
+    ]
+  }
+}
