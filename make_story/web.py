@@ -21,7 +21,7 @@ from .service import (
 	serialize_state,
 	test_model_connection,
 )
-from .db import delete_story, get_story, init_db, list_stories, restore_story
+from .db import delete_story, get_story, init_db, list_stories, restore_story, update_story_meta
 
 
 WEB_DIR = Path(__file__).resolve().parent / "webapp"
@@ -245,6 +245,24 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
 				return
 			self._send_json({"ok": True})
+			return
+
+		if parsed.path.startswith("/api/stories/") and parsed.path.endswith("/meta"):
+			story_id = parsed.path.removesuffix("/meta").rsplit("/", 1)[-1]
+			if not story_id.isdigit():
+				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
+				return
+			title = str(payload.get("title", "")).strip()
+			notes = str(payload.get("notes", "")).strip()
+			if not title:
+				self._send_json({"error": "标题不能为空"}, status=HTTPStatus.BAD_REQUEST)
+				return
+			updated = update_story_meta(int(story_id), title=title, notes=notes)
+			if not updated:
+				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
+				return
+			story = get_story(int(story_id))
+			self._send_json({"ok": True, "story": story})
 			return
 
 		self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)

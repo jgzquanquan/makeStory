@@ -373,6 +373,7 @@ def persist_story(request: GenerateRequest, state: PipelineState) -> int:
 		title=title,
 		topic=request.topic,
 		constraints=request.constraints,
+		notes="",
 		num_episodes=state.num_episodes,
 		max_iterations=state.max_iterations,
 		result=serialize_state(state),

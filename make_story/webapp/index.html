@@ -557,6 +557,76 @@
       flex-wrap: wrap;
     }
 
+    .result-toolbar,
+    .story-form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .story-form textarea {
+      min-height: 96px;
+    }
+
+    .markdown {
+      color: #39271a;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+
+    .markdown h1,
+    .markdown h2,
+    .markdown h3 {
+      margin: 1.2em 0 0.5em;
+      line-height: 1.25;
+    }
+
+    .markdown h1 { font-size: 28px; }
+    .markdown h2 { font-size: 22px; }
+    .markdown h3 { font-size: 18px; }
+
+    .markdown p,
+    .markdown ul,
+    .markdown pre,
+    .markdown blockquote {
+      margin: 0 0 14px;
+    }
+
+    .markdown ul {
+      padding-left: 20px;
+    }
+
+    .markdown li {
+      margin-bottom: 8px;
+    }
+
+    .markdown pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 13px;
+      background: rgba(88, 58, 34, 0.045);
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(88, 58, 34, 0.06);
+    }
+
+    .markdown code {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      background: rgba(88, 58, 34, 0.08);
+      padding: 2px 6px;
+      border-radius: 8px;
+      font-size: 0.92em;
+    }
+
+    .markdown blockquote {
+      margin-left: 0;
+      padding: 10px 14px;
+      border-left: 4px solid rgba(159, 51, 36, 0.22);
+      background: rgba(159, 51, 36, 0.06);
+      color: #5e3b24;
+      border-radius: 0 12px 12px 0;
+    }
+
     .undo-banner {
       display: flex;
       flex-wrap: wrap;
@@ -846,6 +916,7 @@
     let activeEpisodeIndex = 0;
     let pendingDeletedStory = null;
     let undoTimer = null;
+    let currentStory = null;
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
@@ -913,18 +984,19 @@
 
     function renderStoryDetail(story) {
       if (!story || !story.result) {
+        currentStory = null;
         resultEl.innerHTML = '<div class="empty">这里会展示最佳创意、故事 Bible、分集规划和剧本文本。</div>';
         return;
       }
 
+      currentStory = story;
       const data = story.result;
       const selected = data.selected_idea || {};
-      const episodePlans = data.episode_plans || [];
       const episodes = data.episodes || [];
       if (activeEpisodeIndex >= episodes.length) {
         activeEpisodeIndex = 0;
       }
-      const activeEpisode = episodes[activeEpisodeIndex] || "";
+      const storyMarkdown = buildStoryMarkdown(story, activeEpisodeIndex);
 
       resultEl.innerHTML = `
         <div class="result-card">
@@ -936,38 +1008,28 @@
             <div><strong>选择理由</strong><br>${escapeHtml(data.selection_reason || "")}</div>
           </div>
           ${story.id ? `
-            <div class="history-actions">
+            <div class="story-form">
+              <div>
+                <label for="detailTitleInput">剧本标题</label>
+                <input id="detailTitleInput" value="${escapeHtml(story.title || "")}">
+              </div>
+              <div>
+                <label for="detailNotesInput">备注</label>
+                <textarea id="detailNotesInput" placeholder="补充平台定位、剪辑建议、后续改写方向">${escapeHtml(story.notes || "")}</textarea>
+              </div>
+            </div>
+            <div class="history-actions result-toolbar">
+              <button class="secondary" data-action="save-meta" data-story-id="${story.id}">保存标题与备注</button>
               <button class="ghost" data-action="reload-story" data-story-id="${story.id}">重新载入到表单</button>
+              <button class="ghost" data-action="export-md">导出 MD</button>
+              <button class="ghost" data-action="export-txt">导出 TXT</button>
+              <button class="ghost" data-action="export-json">导出 JSON</button>
               <button class="danger" data-action="delete-story" data-story-id="${story.id}">删除这部剧本</button>
             </div>
           ` : ""}
         </div>
         <div class="result-card">
-          <h3>故事 Bible</h3>
-          <div class="mono">${escapeHtml(JSON.stringify(data.story_bible || {}, null, 2))}</div>
-        </div>
-        <div class="result-card">
-          <h3>大纲</h3>
-          <div class="mono">${escapeHtml(data.outline || "")}</div>
-        </div>
-        <div class="result-card">
-          <h3>人物小传</h3>
-          <div class="mono">${escapeHtml(data.characters || "")}</div>
-        </div>
-        <div class="result-card">
-          <h3>分集规划</h3>
-          <div class="preview-list">
-            ${episodePlans.map(item => `
-              <div class="preview-item">
-                <b>第${escapeHtml(String(item.episode_number || ""))}集 · ${escapeHtml(item.title || "")}</b><br>
-                ${escapeHtml(item.goal || "")}<br>
-                钩子：${escapeHtml(item.hook || "")}
-              </div>
-            `).join("")}
-          </div>
-        </div>
-        <div class="result-card">
-          <h3>分集剧本</h3>
+          <h3>Markdown 阅读视图</h3>
           <div class="episode-tabs">
             ${episodes.map((_, index) => `
               <button class="episode-tab ${index === activeEpisodeIndex ? "active" : ""}" data-episode-index="${index}">
@@ -975,7 +1037,7 @@
               </button>
             `).join("")}
           </div>
-          <div class="mono">${escapeHtml(activeEpisode)}</div>
+          <div class="markdown">${renderMarkdown(storyMarkdown)}</div>
         </div>
       `;
 
@@ -989,6 +1051,32 @@
       const reloadButton = resultEl.querySelector('[data-action="reload-story"]');
       if (reloadButton) {
         reloadButton.addEventListener("click", () => reloadStoryToForm(story));
+      }
+
+      const saveMetaButton = resultEl.querySelector('[data-action="save-meta"]');
+      if (saveMetaButton) {
+        saveMetaButton.addEventListener("click", async () => {
+          try {
+            await saveStoryMeta(story.id);
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+      }
+
+      const exportMdButton = resultEl.querySelector('[data-action="export-md"]');
+      if (exportMdButton) {
+        exportMdButton.addEventListener("click", () => exportStory("md"));
+      }
+
+      const exportTxtButton = resultEl.querySelector('[data-action="export-txt"]');
+      if (exportTxtButton) {
+        exportTxtButton.addEventListener("click", () => exportStory("txt"));
+      }
+
+      const exportJsonButton = resultEl.querySelector('[data-action="export-json"]');
+      if (exportJsonButton) {
+        exportJsonButton.addEventListener("click", () => exportStory("json"));
       }
 
       const deleteButton = resultEl.querySelector('[data-action="delete-story"]');
@@ -1030,6 +1118,7 @@
           <div class="history-meta">
             ${escapeHtml(item.topic || "")}<br>
             ${escapeHtml(formatDate(item.created_at || ""))} · ${escapeHtml(String(item.num_episodes || 0))} 集
+            ${item.notes ? `<br>备注：${escapeHtml(item.notes.slice(0, 48))}` : ""}
           </div>
         </div>
       `).join("");
@@ -1051,6 +1140,217 @@
       maxIterationsInput.value = Number(story.max_iterations || 2);
       window.scrollTo({ top: 0, behavior: "smooth" });
       setStatus(`已把《${story.title || "未命名剧本"}》重新载入到生成表单`);
+    }
+
+    function formatInlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    }
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+      const html = [];
+      let paragraph = [];
+      let listItems = [];
+      let quoteLines = [];
+      let codeLines = [];
+      let inCode = false;
+
+      function flushParagraph() {
+        if (!paragraph.length) return;
+        html.push(`<p>${formatInlineMarkdown(paragraph.join(" "))}</p>`);
+        paragraph = [];
+      }
+
+      function flushList() {
+        if (!listItems.length) return;
+        html.push(`<ul>${listItems.map(item => `<li>${formatInlineMarkdown(item)}</li>`).join("")}</ul>`);
+        listItems = [];
+      }
+
+      function flushCode() {
+        if (!codeLines.length) return;
+        html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        codeLines = [];
+      }
+
+      function flushQuote() {
+        if (!quoteLines.length) return;
+        html.push(`<blockquote>${quoteLines.map(line => formatInlineMarkdown(line)).join("<br>")}</blockquote>`);
+        quoteLines = [];
+      }
+
+      for (const rawLine of lines) {
+        const line = rawLine.trimEnd();
+        if (line.startsWith("```")) {
+          flushParagraph();
+          flushList();
+          flushQuote();
+          if (inCode) {
+            flushCode();
+          }
+          inCode = !inCode;
+          continue;
+        }
+        if (inCode) {
+          codeLines.push(rawLine);
+          continue;
+        }
+        const trimmed = line.trim();
+        if (!trimmed) {
+          flushParagraph();
+          flushList();
+          flushQuote();
+          continue;
+        }
+        if (trimmed.startsWith("### ")) {
+          flushParagraph();
+          flushList();
+          flushQuote();
+          html.push(`<h3>${formatInlineMarkdown(trimmed.slice(4))}</h3>`);
+          continue;
+        }
+        if (trimmed.startsWith("## ")) {
+          flushParagraph();
+          flushList();
+          flushQuote();
+          html.push(`<h2>${formatInlineMarkdown(trimmed.slice(3))}</h2>`);
+          continue;
+        }
+        if (trimmed.startsWith("# ")) {
+          flushParagraph();
+          flushList();
+          flushQuote();
+          html.push(`<h1>${formatInlineMarkdown(trimmed.slice(2))}</h1>`);
+          continue;
+        }
+        if (trimmed.startsWith("- ")) {
+          flushParagraph();
+          flushQuote();
+          listItems.push(trimmed.slice(2));
+          continue;
+        }
+        if (trimmed.startsWith("> ")) {
+          flushParagraph();
+          flushList();
+          quoteLines.push(trimmed.slice(2));
+          continue;
+        }
+        paragraph.push(trimmed);
+      }
+
+      flushParagraph();
+      flushList();
+      flushQuote();
+      flushCode();
+      return html.join("");
+    }
+
+    function buildStoryMarkdown(story, episodeIndex = 0) {
+      const data = story.result || {};
+      const selected = data.selected_idea || {};
+      const bible = data.story_bible || {};
+      const plans = Array.isArray(data.episode_plans) ? data.episode_plans : [];
+      const episodes = Array.isArray(data.episodes) ? data.episodes : [];
+      const activeEpisode = episodes[episodeIndex] || "";
+      const activePlan = plans[episodeIndex] || {};
+
+      const planLines = plans.map(item => (
+        `- 第${item.episode_number || "?"}集《${item.title || "未命名"}》：${item.goal || ""}；钩子：${item.hook || ""}`
+      ));
+      const characterLines = String(data.characters || "")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => line.startsWith("- ") ? line : `- ${line}`);
+      const bibleLines = [
+        `- 世界观：${bible.world || ""}`,
+        `- 核心冲突：${bible.core_conflict || ""}`,
+        `- 主题：${bible.theme || ""}`,
+        `- 调性：${bible.tone || ""}`,
+        ...(Array.isArray(bible.main_characters) ? bible.main_characters.map(item => `- ${item}`) : [])
+      ];
+
+      return [
+        `# ${story.title || selected.title || "未命名剧本"}`,
+        "",
+        `> 主题：${story.topic || ""}`,
+        `> 创建时间：${formatDate(story.created_at || "")}`,
+        `> 选择理由：${data.selection_reason || ""}`,
+        ...(story.notes ? ["", "## 备注", "", story.notes] : []),
+        "",
+        "## 故事 Bible",
+        "",
+        ...bibleLines,
+        "",
+        "## 大纲",
+        "",
+        data.outline || "暂无大纲",
+        "",
+        "## 人物小传",
+        "",
+        ...(characterLines.length ? characterLines : ["- 暂无人物信息"]),
+        "",
+        "## 分集规划",
+        "",
+        ...(planLines.length ? planLines : ["- 暂无分集规划"]),
+        "",
+        `## 当前查看：第${episodeIndex + 1}集${activePlan.title ? `《${activePlan.title}》` : ""}`,
+        "",
+        "```text",
+        activeEpisode || "暂无剧本文本",
+        "```"
+      ].join("\n");
+    }
+
+    function downloadFile(filename, content, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportStory(format) {
+      if (!currentStory) return;
+      const baseName = (currentStory.title || "story").replace(/[\\/:*?\"<>|]+/g, "_");
+      if (format === "md") {
+        downloadFile(`${baseName}.md`, buildStoryMarkdown(currentStory, activeEpisodeIndex), "text/markdown;charset=utf-8");
+        setStatus("已导出 Markdown");
+        return;
+      }
+      if (format === "txt") {
+        downloadFile(`${baseName}.txt`, buildStoryMarkdown(currentStory, activeEpisodeIndex).replace(/^#+\s?/gm, ""), "text/plain;charset=utf-8");
+        setStatus("已导出 TXT");
+        return;
+      }
+      downloadFile(`${baseName}.json`, JSON.stringify(currentStory, null, 2), "application/json;charset=utf-8");
+      setStatus("已导出 JSON");
+    }
+
+    async function saveStoryMeta(storyId) {
+      const titleInput = document.getElementById("detailTitleInput");
+      const notesInput = document.getElementById("detailNotesInput");
+      const title = titleInput ? titleInput.value.trim() : "";
+      const notes = notesInput ? notesInput.value.trim() : "";
+      const resp = await fetch(`/api/stories/${storyId}/meta`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, notes })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "保存标题与备注失败");
+      }
+      currentStory = data.story;
+      renderStoryDetail(data.story);
+      await loadHistory(historyPage, historyQuery, historySort);
+      setStatus("标题与备注已保存");
     }
 
     function renderPreview(job) {

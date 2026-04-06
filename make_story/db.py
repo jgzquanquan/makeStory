@@ -32,6 +32,7 @@ def init_db() -> None:
 				title TEXT NOT NULL,
 				topic TEXT NOT NULL,
 				constraints TEXT NOT NULL DEFAULT '',
+				notes TEXT NOT NULL DEFAULT '',
 				num_episodes INTEGER NOT NULL DEFAULT 0,
 				max_iterations INTEGER NOT NULL DEFAULT 2,
 				deleted_at TEXT DEFAULT NULL,
@@ -47,6 +48,10 @@ def init_db() -> None:
 		if "max_iterations" not in columns:
 			conn.execute(
 				"ALTER TABLE stories ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 2"
+			)
+		if "notes" not in columns:
+			conn.execute(
+				"ALTER TABLE stories ADD COLUMN notes TEXT NOT NULL DEFAULT ''"
 			)
 		if "deleted_at" not in columns:
 			conn.execute(
@@ -64,6 +69,7 @@ def save_story(
 	title: str,
 	topic: str,
 	constraints: str,
+	notes: str,
 	num_episodes: int,
 	max_iterations: int,
 	result: dict[str, Any],
@@ -77,17 +83,19 @@ def save_story(
 				title,
 				topic,
 				constraints,
+				notes,
 				num_episodes,
 				max_iterations,
 				result_json,
 				created_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			""",
 			(
 				title,
 				topic,
 				constraints,
+				notes,
 				num_episodes,
 				max_iterations,
 				json.dumps(result, ensure_ascii=False),
@@ -126,7 +134,7 @@ def list_stories(
 		)
 		rows = conn.execute(
 			"""
-			SELECT id, title, topic, constraints, num_episodes, max_iterations, created_at
+			SELECT id, title, topic, constraints, notes, num_episodes, max_iterations, created_at
 			FROM stories
 			"""
 			+ where_clause
@@ -144,6 +152,7 @@ def list_stories(
 			"title": row["title"],
 			"topic": row["topic"],
 			"constraints": row["constraints"],
+			"notes": row["notes"],
 			"num_episodes": int(row["num_episodes"]),
 			"max_iterations": int(row["max_iterations"]),
 			"created_at": row["created_at"],
@@ -166,7 +175,7 @@ def get_story(story_id: int) -> dict[str, Any] | None:
 	with get_connection() as conn:
 		row = conn.execute(
 			"""
-			SELECT id, title, topic, constraints, num_episodes, max_iterations, result_json, created_at
+			SELECT id, title, topic, constraints, notes, num_episodes, max_iterations, result_json, created_at
 			FROM stories
 			WHERE id = ? AND deleted_at IS NULL
 			""",
@@ -182,6 +191,7 @@ def get_story(story_id: int) -> dict[str, Any] | None:
 		"title": row["title"],
 		"topic": row["topic"],
 		"constraints": row["constraints"],
+		"notes": row["notes"],
 		"num_episodes": int(row["num_episodes"]),
 		"max_iterations": int(row["max_iterations"]),
 		"created_at": row["created_at"],
@@ -196,6 +206,20 @@ def delete_story(story_id: int) -> bool:
 		cursor = conn.execute(
 			"UPDATE stories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
 			(deleted_at, story_id),
+		)
+		return cursor.rowcount > 0
+
+
+def update_story_meta(story_id: int, title: str, notes: str) -> bool:
+	init_db()
+	with get_connection() as conn:
+		cursor = conn.execute(
+			"""
+			UPDATE stories
+			SET title = ?, notes = ?
+			WHERE id = ? AND deleted_at IS NULL
+			""",
+			(title.strip(), notes.strip(), story_id),
 		)
 		return cursor.rowcount > 0
 
