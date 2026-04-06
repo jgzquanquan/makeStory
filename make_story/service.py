@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List
@@ -15,7 +16,7 @@ from .agents import (
 	node_select_best,
 	node_write_episode,
 )
-from .config import BASE_URL, MODEL_NAME, OPENAI_API_KEY
+from .config import DEFAULT_MODEL_NAME, ENV_PATH, get_runtime_settings
 from .llm import ChatLLM, MockLLM, as_messages
 from .state import PipelineState
 
@@ -30,12 +31,12 @@ class TopicPreset(BaseModel):
 class GenerateRequest(BaseModel):
 	topic: str
 	constraints: str = ""
-	num_episodes: int = 6
-	max_iterations: int = 2
+	num_episodes: int = Field(default=6, ge=1, le=20)
+	max_iterations: int = Field(default=2, ge=1, le=10)
 	mock: bool = False
 	api_key: str = ""
-	model_name: str = MODEL_NAME
-	base_url: str = BASE_URL or ""
+	model_name: str = DEFAULT_MODEL_NAME
+	base_url: str = ""
 
 
 class ProgressEvent(BaseModel):
@@ -43,6 +44,7 @@ class ProgressEvent(BaseModel):
 	label: str
 	status: str
 	message: str
+	data: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelTestResult(BaseModel):
@@ -55,6 +57,15 @@ class ModelTestResult(BaseModel):
 
 
 ProgressCallback = Callable[[ProgressEvent], None]
+
+PIPELINE_STAGES: List[tuple[str, str]] = [
+	("ideation", "创意池"),
+	("selection", "选题与 Bible"),
+	("outline", "大纲设计"),
+	("review", "审稿迭代"),
+	("planning", "分集规划"),
+	("writing", "分集写作"),
+]
 
 
 TOPIC_PRESETS: List[TopicPreset] = [
@@ -98,12 +109,13 @@ TOPIC_PRESETS: List[TopicPreset] = [
 
 
 def create_llm(request: GenerateRequest) -> ChatLLM | MockLLM:
+	settings = get_runtime_settings()
 	if request.mock:
 		return MockLLM()
 	return ChatLLM(
-		model=request.model_name,
-		api_key=request.api_key or OPENAI_API_KEY,
-		base_url=request.base_url or BASE_URL,
+		model=request.model_name or settings["model_name"],
+		api_key=request.api_key or settings["openai_api_key"],
+		base_url=request.base_url or settings["base_url"],
 	)
 
 
@@ -119,10 +131,80 @@ def apply_state_update(state: PipelineState, update: Dict[str, Any]) -> Pipeline
 	return PipelineState.model_validate(data)
 
 
-def emit_progress(progress: ProgressCallback | None, key: str, label: str, status: str, message: str) -> None:
+def run_ideation_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	return node_multi_ideation(state, llm)
+
+
+def run_selection_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	return node_select_best(state, llm)
+
+
+def run_outline_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	state = apply_state_update(state, node_generate_outline(state, llm))
+	return node_generate_characters(state, llm)
+
+
+def run_review_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	return node_review_outline(state, llm)
+
+
+def run_rewrite_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	return node_rewrite_outline(state, llm)
+
+
+def run_episode_planning_step(state: PipelineState, llm: ChatLLM | MockLLM) -> Dict[str, Any]:
+	return node_plan_episodes(state, llm)
+
+
+def run_episode_writing_step(state: PipelineState, llm: ChatLLM | MockLLM, index: int) -> str:
+	return node_write_episode(state, llm, index)
+
+
+def build_stage_preview(state: PipelineState, key: str) -> Dict[str, Any]:
+	if key == "ideation":
+		return {
+			"ideas": [idea.model_dump() for idea in state.ideas],
+		}
+	if key == "selection":
+		return {
+			"selected_idea": state.selected_idea.model_dump() if state.selected_idea else None,
+			"selection_reason": state.selection_reason,
+			"story_bible": state.story_bible.model_dump(),
+		}
+	if key == "outline":
+		return {
+			"outline": state.outline or "",
+			"characters": state.characters or "",
+		}
+	if key == "review":
+		return {
+			"review": state.review.model_dump(),
+			"iteration": state.iteration,
+		}
+	if key == "planning":
+		return {
+			"episode_plans": [item.model_dump() for item in state.episode_plans],
+		}
+	if key == "writing":
+		return {
+			"episodes": state.episodes,
+			"episodes_completed": len(state.episodes),
+			"num_episodes": state.num_episodes,
+		}
+	return {}
+
+
+def emit_progress(
+	progress: ProgressCallback | None,
+	key: str,
+	label: str,
+	status: str,
+	message: str,
+	data: Dict[str, Any] | None = None,
+) -> None:
 	if progress is None:
 		return
-	progress(ProgressEvent(key=key, label=label, status=status, message=message))
+	progress(ProgressEvent(key=key, label=label, status=status, message=message, data=data or {}))
 
 
 def run_pipeline(request: GenerateRequest, progress: ProgressCallback | None = None) -> PipelineState:
@@ -136,46 +218,107 @@ def run_pipeline(request: GenerateRequest, progress: ProgressCallback | None = N
 	)
 
 	emit_progress(progress, "ideation", "创意池", "running", "多 Agent 正在产出候选题材")
-	state = apply_state_update(state, node_multi_ideation(state, llm))
-	emit_progress(progress, "ideation", "创意池", "done", f"已生成 {len(state.ideas)} 个候选创意")
+	state = apply_state_update(state, run_ideation_step(state, llm))
+	emit_progress(
+		progress,
+		"ideation",
+		"创意池",
+		"done",
+		f"已生成 {len(state.ideas)} 个候选创意",
+		build_stage_preview(state, "ideation"),
+	)
 
 	emit_progress(progress, "selection", "选题与 Bible", "running", "正在选择最佳创意并生成故事 Bible")
-	state = apply_state_update(state, node_select_best(state, llm))
+	state = apply_state_update(state, run_selection_step(state, llm))
 	selected_title = state.selected_idea.title if state.selected_idea else "未命名"
-	emit_progress(progress, "selection", "选题与 Bible", "done", f"已选定《{selected_title}》")
+	emit_progress(
+		progress,
+		"selection",
+		"选题与 Bible",
+		"done",
+		f"已选定《{selected_title}》",
+		build_stage_preview(state, "selection"),
+	)
 
 	emit_progress(progress, "outline", "大纲设计", "running", "正在生成总大纲和人物骨架")
-	state = apply_state_update(state, node_generate_outline(state, llm))
-	state = apply_state_update(state, node_generate_characters(state, llm))
-	emit_progress(progress, "outline", "大纲设计", "done", "大纲和人物设定已生成")
+	state = apply_state_update(state, run_outline_step(state, llm))
+	emit_progress(
+		progress,
+		"outline",
+		"大纲设计",
+		"done",
+		"大纲和人物设定已生成",
+		build_stage_preview(state, "outline"),
+	)
 
 	approved = False
 	while not approved:
 		emit_progress(progress, "review", "审稿迭代", "running", f"第 {state.iteration + 1} 轮审稿中")
-		state = apply_state_update(state, node_review_outline(state, llm))
+		state = apply_state_update(state, run_review_step(state, llm))
 		if state.review.approved:
 			approved = True
-			emit_progress(progress, "review", "审稿迭代", "done", "审稿通过，进入分集规划")
+			emit_progress(
+				progress,
+				"review",
+				"审稿迭代",
+				"done",
+				"审稿通过，进入分集规划",
+				build_stage_preview(state, "review"),
+			)
 			break
 		if state.iteration >= state.max_iterations:
 			approved = True
-			state.review.approved = True
-			emit_progress(progress, "review", "审稿迭代", "done", "达到最大迭代次数，按当前版本继续产出")
+			state = apply_state_update(
+				state,
+				{
+					"review": state.review.model_copy(update={"approved": True}),
+				},
+				)
+			emit_progress(
+				progress,
+				"review",
+				"审稿迭代",
+				"done",
+				"达到最大迭代次数，按当前版本继续产出",
+				build_stage_preview(state, "review"),
+			)
 			break
-		emit_progress(progress, "review", "审稿迭代", "running", "根据审稿意见重写大纲")
-		state = apply_state_update(state, node_rewrite_outline(state, llm))
+		emit_progress(
+			progress,
+			"review",
+			"审稿迭代",
+			"running",
+			"根据审稿意见重写大纲",
+			build_stage_preview(state, "review"),
+		)
+		state = apply_state_update(state, run_rewrite_step(state, llm))
 
 	emit_progress(progress, "planning", "分集规划", "running", "正在拆分每集目标、钩子和节拍")
-	state = apply_state_update(state, node_plan_episodes(state, llm))
-	emit_progress(progress, "planning", "分集规划", "done", f"已完成 {len(state.episode_plans)} 集规划")
+	state = apply_state_update(state, run_episode_planning_step(state, llm))
+	emit_progress(
+		progress,
+		"planning",
+		"分集规划",
+		"done",
+		f"已完成 {len(state.episode_plans)} 集规划",
+		build_stage_preview(state, "planning"),
+	)
 
 	emit_progress(progress, "writing", "分集写作", "running", "正在逐集生成剧本文本")
 	episodes: List[str] = []
 	for index in range(1, state.num_episodes + 1):
 		emit_progress(progress, "writing", "分集写作", "running", f"正在编写第 {index}/{state.num_episodes} 集")
-		episodes.append(node_write_episode(state, llm, index))
-	state = apply_state_update(state, {"episodes": episodes})
-	emit_progress(progress, "writing", "分集写作", "done", "全部分集剧本已生成")
+		episodes.append(run_episode_writing_step(state, llm, index))
+		state = apply_state_update(state, {"episodes": episodes})
+		emit_progress(
+			progress,
+			"writing",
+			"分集写作",
+			"running",
+			f"正在编写第 {index}/{state.num_episodes} 集",
+			build_stage_preview(state, "writing"),
+		)
+	emit_progress(progress, "writing", "分集写作", "done", "全部分集剧本已生成", build_stage_preview(state, "writing"))
 
 	return state
 
@@ -183,6 +326,7 @@ def run_pipeline(request: GenerateRequest, progress: ProgressCallback | None = N
 def test_model_connection(request: GenerateRequest) -> ModelTestResult:
 	start = time.perf_counter()
 	llm = create_llm(request)
+	settings = get_runtime_settings()
 
 	if request.mock:
 		reply = "MOCK 通路正常"
@@ -198,8 +342,8 @@ def test_model_connection(request: GenerateRequest) -> ModelTestResult:
 	latency_ms = int((time.perf_counter() - start) * 1000)
 	return ModelTestResult(
 		ok=True,
-		model_name=request.model_name,
-		base_url=request.base_url or BASE_URL or "",
+		model_name=request.model_name or settings["model_name"],
+		base_url=request.base_url or settings["base_url"],
 		latency_ms=latency_ms,
 		response_preview=reply[:200],
 		message="模型连接成功",
@@ -220,18 +364,20 @@ def serialize_state(state: PipelineState) -> Dict[str, Any]:
 
 
 def load_runtime_config() -> Dict[str, str]:
-	api_key = OPENAI_API_KEY or ""
+	settings = get_runtime_settings()
+	api_key = settings["openai_api_key"]
 	return {
 		"api_key": "",
 		"api_key_hint": mask_secret(api_key),
 		"has_api_key": "true" if bool(api_key) else "false",
-		"model_name": MODEL_NAME,
-		"base_url": BASE_URL or "",
+		"model_name": settings["model_name"],
+		"base_url": settings["base_url"],
 	}
 
 
 def save_runtime_config(api_key: str, model_name: str, base_url: str) -> None:
-	env_path = Path(".env")
+	env_path = ENV_PATH
+	settings = get_runtime_settings()
 	entries: Dict[str, str] = {}
 	if env_path.exists():
 		for raw_line in env_path.read_text(encoding="utf-8").splitlines():
@@ -241,12 +387,15 @@ def save_runtime_config(api_key: str, model_name: str, base_url: str) -> None:
 			key, value = line.split("=", 1)
 			entries[key] = value
 
-	entries["OPENAI_API_KEY"] = api_key.strip()
-	entries["MODEL_NAME"] = model_name.strip() or MODEL_NAME
+	entries["OPENAI_API_KEY"] = api_key.strip() or settings["openai_api_key"]
+	entries["MODEL_NAME"] = model_name.strip() or settings["model_name"]
 	entries["BASE_URL"] = base_url.strip()
 
 	content = "\n".join(f"{key}={value}" for key, value in entries.items()) + "\n"
 	env_path.write_text(content, encoding="utf-8")
+	os.environ["OPENAI_API_KEY"] = entries["OPENAI_API_KEY"]
+	os.environ["MODEL_NAME"] = entries["MODEL_NAME"]
+	os.environ["BASE_URL"] = entries["BASE_URL"]
 
 
 def presets_as_json() -> str:
@@ -259,3 +408,10 @@ def mask_secret(secret: str) -> str:
 	if len(secret) <= 8:
 		return "*" * len(secret)
 	return f"{secret[:4]}...{secret[-4:]}"
+
+
+def initial_progress_stages() -> List[Dict[str, str]]:
+	return [
+		{"key": key, "label": label, "status": "pending", "message": "等待开始"}
+		for key, label in PIPELINE_STAGES
+	]

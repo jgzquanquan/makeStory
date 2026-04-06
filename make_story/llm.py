@@ -1,17 +1,21 @@
 import json
 import re
 from typing import Any, Dict, List, TypeVar
+
 from openai import OpenAI
 from pydantic import BaseModel
-from .config import OPENAI_API_KEY, BASE_URL, MODEL_NAME
+
+from .config import get_base_url, get_model_name, get_openai_api_key
 
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class ChatLLM:
-	def __init__(self, model: str = MODEL_NAME, api_key: str | None = OPENAI_API_KEY, base_url: str | None = BASE_URL):
-		self.model = model
+	def __init__(self, model: str | None = None, api_key: str | None = None, base_url: str | None = None):
+		self.model = model or get_model_name()
+		api_key = api_key if api_key is not None else get_openai_api_key()
+		base_url = base_url if base_url is not None else get_base_url()
 		self.client = OpenAI(api_key=api_key, base_url=base_url) if api_key else None
 
 	def invoke(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
@@ -162,8 +166,29 @@ class MockLLM:
 				ensure_ascii=False,
 			)
 		if "第" in joined and "集" in joined and "剧本" in joined:
+			episode_label = "本集"
+			title = "未命名分集"
+			hook = "新的秘密浮出水面"
+			plan_match = re.search(r'"title"\s*:\s*"([^"]+)"', joined)
+			hook_match = re.search(r'"hook"\s*:\s*"([^"]+)"', joined)
+			index_match = re.search(r"编写第\s*(\d+)\s*集", joined)
+			if plan_match:
+				title = plan_match.group(1)
+			if hook_match:
+				hook = hook_match.group(1)
+			if index_match:
+				episode_label = f"第{index_match.group(1)}集"
 			return (
-				"【场景一】民政局门口，夜。\n沈念：签完这份字，我们就两清。\n周叙：如果真能两清，你不会把手抖成这样。\n\n【场景二】车内。\n一条匿名短信弹出，附着旧案照片。\n沈念：这张照片三年前就该被销毁了。\n周叙：看来今晚，谁都别想离婚了。\n\n【场景三】旧案现场外。\n两人重新并肩，发现有人比他们更早到过。"
+				f"【{episode_label}·{title}】\n"
+				f"【场景一】情绪对峙现场。\n"
+				f"沈念：这一次，我不想再被人牵着走。\n"
+				f"周叙：可对方已经把钩子甩到我们面前了。\n\n"
+				f"【场景二】线索出现。\n"
+				f"屏幕上跳出新的证据提示。\n"
+				f"沈念：{hook}\n"
+				f"周叙：这不是巧合，是有人在逼我们往前走。\n\n"
+				f"【场景三】反转收尾。\n"
+				f"两人刚准备追查，真正的幕后人先一步抹掉了关键痕迹。"
 			)
 		# 默认占位
 		return "MOCK占位回复"

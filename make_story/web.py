@@ -1,6 +1,7 @@
 import argparse
 import json
 import threading
+import time
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,7 @@ from urllib.parse import urlparse
 
 from .service import (
 	GenerateRequest,
+	initial_progress_stages,
 	load_runtime_config,
 	ModelTestResult,
 	presets_as_json,
@@ -24,27 +26,49 @@ WEB_DIR = Path(__file__).resolve().parent / "webapp"
 INDEX_HTML = WEB_DIR / "index.html"
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+JOB_TTL_SECONDS = 60 * 30
+MAX_JOBS = 40
+
+
+def prune_jobs() -> None:
+	now = time.time()
+	with JOBS_LOCK:
+		expired = [
+			job_id
+			for job_id, job in JOBS.items()
+			if now - float(job.get("updated_at", now)) > JOB_TTL_SECONDS
+		]
+		for job_id in expired:
+			JOBS.pop(job_id, None)
+
+		if len(JOBS) <= MAX_JOBS:
+			return
+
+		ordered_jobs = sorted(
+			JOBS.items(),
+			key=lambda item: float(item[1].get("updated_at", 0)),
+			reverse=True,
+		)
+		for job_id, _ in ordered_jobs[MAX_JOBS:]:
+			JOBS.pop(job_id, None)
 
 
 def create_job(request: GenerateRequest) -> str:
+	prune_jobs()
 	job_id = uuid.uuid4().hex
-	initial_stages = [
-		{"key": "ideation", "label": "创意池", "status": "pending", "message": "等待开始"},
-		{"key": "selection", "label": "选题与 Bible", "status": "pending", "message": "等待开始"},
-		{"key": "outline", "label": "大纲设计", "status": "pending", "message": "等待开始"},
-		{"key": "review", "label": "审稿迭代", "status": "pending", "message": "等待开始"},
-		{"key": "planning", "label": "分集规划", "status": "pending", "message": "等待开始"},
-		{"key": "writing", "label": "分集写作", "status": "pending", "message": "等待开始"},
-	]
+	now = time.time()
 	with JOBS_LOCK:
 		JOBS[job_id] = {
 			"id": job_id,
 			"status": "queued",
 			"message": "任务已创建，等待执行",
-			"stages": initial_stages,
+			"stages": initial_progress_stages(),
+			"preview": {},
 			"result": None,
 			"error": "",
 			"request": request.model_dump(),
+			"created_at": now,
+			"updated_at": now,
 		}
 	return job_id
 
@@ -58,8 +82,11 @@ def update_job_stage(job_id: str, event: ProgressEvent) -> None:
 			if stage["key"] == event.key:
 				stage["status"] = event.status
 				stage["message"] = event.message
+		if event.data:
+			job["preview"][event.key] = event.data
 		job["status"] = "running"
 		job["message"] = event.message
+		job["updated_at"] = time.time()
 
 
 def finish_job(job_id: str, result: dict | None = None, error: str = "") -> None:
@@ -71,6 +98,7 @@ def finish_job(job_id: str, result: dict | None = None, error: str = "") -> None
 		job["error"] = error
 		job["status"] = "failed" if error else "completed"
 		job["message"] = error or "生成完成"
+		job["updated_at"] = time.time()
 
 
 def run_job(job_id: str, request: GenerateRequest) -> None:
@@ -118,6 +146,7 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			return
 
 		if parsed.path.startswith("/api/jobs/"):
+			prune_jobs()
 			job_id = parsed.path.rsplit("/", 1)[-1]
 			with JOBS_LOCK:
 				job = JOBS.get(job_id)
