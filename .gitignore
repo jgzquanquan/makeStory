@@ -1,5 +1,6 @@
 # 环境变量（含API密钥）
 .env
+.env.*
 
 # Python
 __pycache__/
@@ -22,6 +23,9 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.coverage
+.pytest_cache/
+.mypy_cache/
 
 # 虚拟环境
 .conda/
@@ -33,3 +37,6 @@ ENV/
 .vscode/
 *.swp
 *.swo
+
+# macOS
+.DS_Store
