@@ -312,10 +312,16 @@
       padding: 12px 18px;
       font: inherit;
       cursor: pointer;
-      transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+      transition: box-shadow 160ms ease, opacity 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
     }
 
-    button:hover { transform: translateY(-1px); }
+    button:hover {
+      box-shadow: 0 8px 18px rgba(89, 56, 31, 0.12);
+    }
+
+    button:active {
+      box-shadow: none;
+    }
 
     .primary {
       background: linear-gradient(135deg, var(--accent), var(--accent-dark));
@@ -329,10 +335,19 @@
       border: 1px solid rgba(109, 31, 22, 0.12);
     }
 
+    .secondary:hover {
+      background: rgba(109, 31, 22, 0.12);
+      border-color: rgba(109, 31, 22, 0.22);
+    }
+
     .tertiary {
       background: linear-gradient(135deg, rgba(203, 122, 43, 0.14), rgba(159, 51, 36, 0.12));
       color: #713016;
       border: 1px solid rgba(203, 122, 43, 0.18);
+    }
+
+    .tertiary:hover {
+      border-color: rgba(203, 122, 43, 0.28);
     }
 
     .status {
@@ -666,10 +681,21 @@
       border: 1px solid rgba(98, 68, 41, 0.08);
     }
 
+    .ghost:hover {
+      background: rgba(98, 68, 41, 0.1);
+      border-color: rgba(98, 68, 41, 0.16);
+      color: #5a4332;
+    }
+
     .danger {
       background: rgba(159, 45, 30, 0.08);
       color: var(--red);
       border: 1px solid rgba(159, 45, 30, 0.12);
+    }
+
+    .danger:hover {
+      background: rgba(159, 45, 30, 0.14);
+      border-color: rgba(159, 45, 30, 0.24);
     }
 
     .pager {
@@ -700,6 +726,16 @@
     .episode-tab.active {
       background: linear-gradient(135deg, var(--accent), var(--accent-dark));
       color: #fff5ef;
+      border-color: transparent;
+    }
+
+    .episode-tab:hover {
+      background: rgba(109, 31, 22, 0.12);
+      border-color: rgba(109, 31, 22, 0.18);
+    }
+
+    .episode-tab.active:hover {
+      background: linear-gradient(135deg, var(--accent), var(--accent-dark));
       border-color: transparent;
     }
 
