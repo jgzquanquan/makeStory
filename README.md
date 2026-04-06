@@ -4,6 +4,15 @@
 
 它不是单次“出一段文本”的玩具，而是一个能看到过程的创作控制台。你可以先选热门题材，再配置模型，先测试 API 是否通，再实时观察创意池、故事 Bible、大纲审稿、分集规划和分集写作一步步推进。
 
+## Overview
+
+这个项目现在已经同时提供两套入口：
+
+- `CLI`，适合命令行快速试跑
+- `Web Console`，适合交互式配置、测试模型连接、观察实时进展
+
+核心目标不是“随便生成一点剧情”，而是把短剧创作流程拆成多个明确的 Agent 环节，让输出更稳定，也让你更容易继续加新角色和新能力。
+
 ## What It Does
 
 - 多 Agent 生成候选创意，不是一上来就押一个题材
@@ -43,6 +52,17 @@
 - Web 页不是纯表单了，能看到每个阶段的实时状态。
 - 模型配置支持单独测试连通性，少走一次完整长链路失败。
 
+## Demo Flow
+
+一次完整流程大致是这样：
+
+1. 选择题材预设，比如都市情感、豪门复仇、职场逆袭
+2. 配置模型、`API Key`、`Base URL`
+3. 先点击“测试模型连接”
+4. 发起生成任务
+5. 实时观察每个阶段推进
+6. 查看最终创意、Bible、分集卡和分集文本
+
 ## Project Structure
 
 `make_story/agents/`
@@ -52,7 +72,7 @@
 结构化产物定义，包含创意候选、故事 bible、审稿结果、分集卡等 schema。
 
 `make_story/state.py`
-LangGraph 风格的全局状态定义。
+全局状态定义。
 
 `make_story/service.py`
 流程调度、进度回调、模型测试、结果序列化。
@@ -66,15 +86,27 @@ LangGraph 风格的全局状态定义。
 `make_story/run.py`
 CLI 入口。
 
+## Requirements
+
+- Python 3.10+
+- 一个可用的 OpenAI 兼容模型接口，或者直接用 `--mock`
+- 推荐使用项目内的 `.conda` Python 环境运行
+
 ## Quick Start
 
-### 1. Mock 模式先跑通
+### 1. 安装依赖
+
+```bash
+./.conda/bin/pip install -r requirements.txt
+```
+
+### 2. Mock 模式先跑通
 
 ```bash
 ./.conda/bin/python -m make_story.run --topic "都市情感悬疑" --constraints "女性向短剧，6集，每集3分钟" --mock
 ```
 
-### 2. 启动 Web 控制台
+### 3. 启动 Web 控制台
 
 ```bash
 ./.conda/bin/python -m make_story.web --host 127.0.0.1 --port 8000
@@ -86,7 +118,7 @@ CLI 入口。
 http://127.0.0.1:8000
 ```
 
-### 3. 使用真实模型
+### 4. 使用真实模型
 
 在 `.env` 里配置：
 
@@ -98,6 +130,24 @@ BASE_URL=
 
 如果你接的是兼容 OpenAI 的中转服务，也可以直接在 Web 控制台里填写 `Base URL` 和模型名。
 
+## CLI Usage
+
+基础示例：
+
+```bash
+./.conda/bin/python -m make_story.run \
+  --topic "豪门复仇反转" \
+  --constraints "竖屏短剧，8集，每集3分钟，前三集必须有强反转"
+```
+
+常用参数：
+
+- `--topic`：主题或题材关键词
+- `--constraints`：平台、受众、节奏、时长等要求
+- `--num-episodes`：分集数
+- `--max-iterations`：审稿最大迭代次数
+- `--mock`：不调用真实模型，走 Mock 流程
+
 ## Web Console
 
 当前页面支持：
@@ -108,6 +158,66 @@ BASE_URL=
 - 实时阶段进展
 - 生成后查看最佳创意、故事 Bible、分集规划和剧本文本
 
+当前页面的阶段面板包含：
+
+- 创意池
+- 选题与 Bible
+- 大纲设计
+- 审稿迭代
+- 分集规划
+- 分集写作
+
+## Model Compatibility
+
+当前后端使用的是 OpenAI Python SDK，所以兼容以下两类接口：
+
+- OpenAI 官方接口
+- OpenAI-compatible 接口，只要支持 `chat.completions.create`
+
+如果你接阿里云、硅基流动或其他兼容接口，通常只需要改：
+
+- `BASE_URL`
+- `MODEL_NAME`
+- `OPENAI_API_KEY`
+
+## Architecture Notes
+
+当前服务层主要在 `make_story/service.py`：
+
+- `run_pipeline()` 负责串起全部 Agent
+- `test_model_connection()` 负责做模型可用性探针
+- 进度事件通过 `ProgressEvent` 回传给 Web 任务状态接口
+
+Web 层在 `make_story/web.py`：
+
+- `/api/test-model`：测试模型连接
+- `/api/generate`：创建生成任务
+- `/api/jobs/{job_id}`：轮询任务进展
+
+## Troubleshooting
+
+### 页面能打开，但生成失败
+
+先用“测试模型连接”按钮。这个按钮会比完整生成更快暴露问题。
+
+重点检查：
+
+- `API Key` 是否有效
+- `Base URL` 是否正确
+- `MODEL_NAME` 是否存在于你当前服务商
+
+### CLI 报缺少依赖
+
+说明你当前 Python 环境没装依赖。优先用项目内 `.conda` 环境。
+
+```bash
+./.conda/bin/pip install -r requirements.txt
+```
+
+### GitHub 推送失败
+
+这个仓库已经切到 SSH 方案。后续机器上如果要 push，记得先配置 GitHub SSH key。
+
 ## Roadmap
 
 - 增加 `Platform Adapter Agent`，分别优化抖音、快手、微信小程序短剧节奏
@@ -115,3 +225,7 @@ BASE_URL=
 - 增加 `Consistency Agent`，检查人物动机、线索回收和设定一致性
 - 增加导出功能，支持一键导出 `json` / `txt`
 - 把文本大纲和剧本也升级成更稳定的结构化中间层
+
+## License
+
+如果你准备开源，下一步建议补一个正式 `LICENSE` 文件。现在仓库里还没有。

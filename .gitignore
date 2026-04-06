@@ -4,6 +4,8 @@
 
 # Python
 __pycache__/
+make_story/__pycache__/
+make_story/agents/__pycache__/
 *.py[cod]
 *$py.class
 *.so
