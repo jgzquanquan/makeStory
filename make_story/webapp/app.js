@@ -20,6 +20,7 @@ const DEFAULT_RESULT_EMPTY = "这里会展示最佳创意、故事 Bible、分�
 const DEFAULT_PROGRESS_EMPTY = "生成开始后，这里会显示每个环节的实时状态。";
 const DEFAULT_PREVIEW_EMPTY = "生成开始后，这里会逐步显示创意候选、选题结果、审稿意见和分集卡。";
 const DEFAULT_DIAGNOSTICS_EMPTY = "先点击“测试模型连接”，这里会显示响应延迟、模型名和返回摘要。";
+const ACTIVE_JOB_STORAGE_KEY = "storyroom:active-job";
 
 const state = {
   history: {
@@ -61,6 +62,38 @@ const state = {
     debugLines: [],
   },
 };
+
+function readStoredActiveJob() {
+  try {
+    const raw = window.sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !parsed.id) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistActiveJob() {
+  try {
+    if (!state.job.id) {
+      window.sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+      id: state.job.id,
+      lockedPayload: state.job.lockedPayload,
+      savedAt: Date.now(),
+    }));
+  } catch {
+    // Ignore storage failures in private mode or restricted environments.
+  }
+}
 
 function debugLog(label, context = {}) {
   if (!state.ui.debugEnabled) {
@@ -633,6 +666,8 @@ function clearPolling({ resetJob = true } = {}) {
   }
   if (resetJob) {
     state.job.id = null;
+    state.job.lockedPayload = null;
+    persistActiveJob();
   }
   state.job.lastProgressKey = "";
   state.job.lastPreviewKey = "";
@@ -641,6 +676,7 @@ function clearPolling({ resetJob = true } = {}) {
 async function handleExpiredJob() {
   debugLog("job-expired", { jobId: state.job.id, activeStoryId: state.story.activeId });
   clearPolling();
+  renderJobSnapshot();
   setStatus("任务状态已过期，正在尝试从历史记录恢复...", { error: true });
   const history = await loadHistory({ page: 1, query: state.history.query, sort: state.history.sort });
   const latest = history.items?.[0];
@@ -675,6 +711,7 @@ function maybeRenderPreview(job) {
 async function handleJobCompleted(data) {
   clearPolling();
   state.job.lockedPayload = null;
+  persistActiveJob();
   renderJobSnapshot();
   await loadHistory({ page: 1, query: state.history.query, sort: state.history.sort });
 
@@ -721,7 +758,6 @@ async function pollJob() {
     }
     if (data.status === "failed") {
       clearPolling();
-      state.job.lockedPayload = null;
       renderJobSnapshot();
       if (!state.story.current) {
         showResultEmpty("生成失败，请检查配置后重试。");
@@ -734,7 +770,6 @@ async function pollJob() {
       return;
     }
     clearPolling();
-    state.job.lockedPayload = null;
     renderJobSnapshot();
     setStatus(error.message, { error: true });
     debugLog("poll-job-failed", { message: error.message, kind: error.kind, status: error.status });
@@ -783,6 +818,7 @@ async function onGenerateStory() {
     }
     const data = await api.generate(state.job.lockedPayload);
     state.job.id = data.job_id;
+    persistActiveJob();
     setStatus("任务已启动，正在获取实时进展...");
     startPolling();
   });
@@ -1038,6 +1074,14 @@ async function init() {
   renderStatus();
   renderDebugStatus();
   bindEvents();
+  const storedActiveJob = readStoredActiveJob();
+  if (storedActiveJob?.id) {
+    state.job.id = storedActiveJob.id;
+    state.job.lockedPayload = storedActiveJob.lockedPayload || null;
+    renderJobSnapshot();
+    setStatus("已恢复上次页面中的生成任务，正在继续获取进度...");
+    startPolling();
+  }
   try {
     await runBusy("load-history", async () => {
       await loadHistory({ page: 1 });
