@@ -45,3 +45,4 @@ ENV/
 
 # Local data
 data/
+.gstack/

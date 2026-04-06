@@ -10,6 +10,7 @@
 
 - `CLI`，适合命令行快速试跑
 - `Web Console`，适合交互式配置、测试模型连接、观察实时进展
+- `History Workspace`，适合在历史剧本之间搜索、排序、编辑标题备注、导出和继续改写
 
 核心目标不是“随便生成一点剧情”，而是把短剧创作流程拆成多个明确的 Agent 环节，让输出更稳定，也让你更容易继续加新角色和新能力。
 
@@ -21,6 +22,8 @@
 - 审稿不通过时自动回到改写环节
 - Web 控制台可以实时看进展，不再盲等
 - 支持在生成前测试模型连接是否正常
+- 历史剧本支持搜索、排序、软删除撤销、重新载入到表单
+- 结果区支持 Markdown 阅读视图、目录导航、当前分集复制和 `MD/TXT/JSON` 导出
 
 ## Pipeline
 
@@ -78,10 +81,22 @@
 流程调度、进度回调、模型测试、结果序列化。
 
 `make_story/web.py`
-本地 Web 服务和任务状态接口。
+本地 Web 服务、任务状态接口、静态资源分发和历史接口会话校验。
 
 `make_story/webapp/index.html`
-前端控制台页面。
+前端页面壳和样式。
+
+`make_story/webapp/app.js`
+前端主状态层、事件绑定、局部渲染和轮询控制。
+
+`make_story/webapp/api.js`
+前端请求层，包含轻量错误分类和历史接口 session 头注入。
+
+`make_story/webapp/dom.js`
+前端 DOM 引用收口。
+
+`make_story/webapp/markdown.js`
+Markdown 构建、目录生成、渲染和导出文本拼装。
 
 `make_story/run.py`
 CLI 入口。
@@ -157,6 +172,11 @@ BASE_URL=
 - 模型连接测试
 - 实时阶段进展
 - 生成后查看最佳创意、故事 Bible、分集规划和剧本文本
+- 历史剧本标题搜索、排序、删除与撤销删除
+- 历史剧本重新载入到生成表单
+- 历史剧本标题与备注编辑
+- Markdown 阅读视图、目录导航、复制当前分集 Markdown
+- 导出 `MD` / `TXT` / `JSON`
 
 当前页面的阶段面板包含：
 
@@ -193,6 +213,32 @@ Web 层在 `make_story/web.py`：
 - `/api/test-model`：测试模型连接
 - `/api/generate`：创建生成任务
 - `/api/jobs/{job_id}`：轮询任务进展
+- `/api/stories`：历史列表、标题搜索、排序和分页
+- `/api/stories/{id}`：历史详情
+- `/api/stories/{id}/meta`：标题和备注更新
+- `/api/stories/{id}/restore`：撤销软删除
+
+## Frontend Notes
+
+当前 Web 控制台已经从单文件内联脚本拆成多个前端模块，重点解决的是“结果区切换卡”和“轮询空转”：
+
+- 结果区改成稳定壳子 + 局部更新，切分集时不再整块重建
+- 轮询会对 `progress` / `preview` 做脏检查，没变化就跳过渲染
+- Markdown 阅读区做了故事级缓存和分集级更新
+- 历史列表和结果区高频按钮改成事件委托，减少重复绑监听
+- 主要视觉效果降级，保留层次感，但减少 `backdrop-filter` 带来的重绘成本
+
+如果你要继续扩展页面，优先沿着 `app.js` / `api.js` / `markdown.js` 这条拆分继续走，不要把逻辑再塞回 `index.html`。
+
+## Local Tool Boundary
+
+当前 Web 控制台按“本地单用户工具”设计，不是多用户在线服务。
+
+- 历史接口需要页面注入的轻量 session token
+- 标题、备注和剧本文本都按纯文本处理，不接受用户自定义 HTML 或 Markdown 直通
+- UI 保存的模型配置会写入本地 `.env`
+
+不要在共享机器或公共环境里把它当成生产后台使用。
 
 ## Troubleshooting
 
@@ -205,6 +251,8 @@ Web 层在 `make_story/web.py`：
 - `API Key` 是否有效
 - `Base URL` 是否正确
 - `MODEL_NAME` 是否存在于你当前服务商
+
+如果生成过程中页面提示任务状态过期，当前版本会优先尝试从历史记录恢复，你可以直接在历史区打开最近生成的剧本。
 
 ### CLI 报缺少依赖
 
@@ -223,7 +271,8 @@ Web 层在 `make_story/web.py`：
 - 增加 `Platform Adapter Agent`，分别优化抖音、快手、微信小程序短剧节奏
 - 增加 `Dialogue Doctor Agent`，单独强化对白 punchline
 - 增加 `Consistency Agent`，检查人物动机、线索回收和设定一致性
-- 增加导出功能，支持一键导出 `json` / `txt`
+- 为 Web 控制台补最小前端回归测试，覆盖历史页、结果页和恢复路径
+- 继续打磨 Markdown 阅读区，例如目录定位和当前分集复制体验
 - 把文本大纲和剧本也升级成更稳定的结构化中间层
 
 ## License
