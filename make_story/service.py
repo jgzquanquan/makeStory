@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 from pydantic import BaseModel, Field
@@ -17,6 +16,7 @@ from .agents import (
 	node_write_episode,
 )
 from .config import DEFAULT_MODEL_NAME, ENV_PATH, get_runtime_settings
+from .db import save_story
 from .llm import ChatLLM, MockLLM, as_messages
 from .state import PipelineState
 
@@ -361,6 +361,22 @@ def serialize_state(state: PipelineState) -> Dict[str, Any]:
 		"episode_plans": [item.model_dump() for item in state.episode_plans],
 		"episodes": state.episodes,
 	}
+
+
+def persist_story(request: GenerateRequest, state: PipelineState) -> int:
+	title = (
+		state.selected_idea.title
+		if state.selected_idea and state.selected_idea.title.strip()
+		else request.topic.strip() or "未命名剧本"
+	)
+	return save_story(
+		title=title,
+		topic=request.topic,
+		constraints=request.constraints,
+		num_episodes=state.num_episodes,
+		max_iterations=state.max_iterations,
+		result=serialize_state(state),
+	)
 
 
 def load_runtime_config() -> Dict[str, str]:

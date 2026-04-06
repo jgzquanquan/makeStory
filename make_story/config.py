@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL_NAME = "gpt-4o-mini"
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+ENV_PATH = ROOT_DIR / ".env"
 
 
 def _read_env_file() -> dict[str, str]:

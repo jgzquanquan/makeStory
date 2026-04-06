@@ -152,16 +152,21 @@ class MockLLM:
 		if '"approved"' in lowered and '"issues"' in lowered:
 			return '{"approved": true, "issues": "", "strengths": ["钩子明确", "人物关系可持续"], "rewrite_focus": []}'
 		if "episode_plans" in lowered:
+			num_episodes = 6
+			match = re.search(r"为\s*(\d+)\s*集短剧生成分集卡", joined)
+			if match:
+				num_episodes = int(match.group(1))
+			base_plans = [
+				{"episode_number": 1, "title": "匿名证据", "goal": "强开场并建立合作关系", "hook": "离婚协议旁边出现命案照片", "beats": ["签字前夜", "匿名短信", "旧案重现", "被迫联手"]},
+				{"episode_number": 2, "title": "旧友回场", "goal": "扩大谜团并加压关系", "hook": "关键记者带来被删改的视频", "beats": ["找记者", "发现剪辑痕迹", "互相猜疑", "新线索出现"]},
+				{"episode_number": 3, "title": "半段录像", "goal": "制造重大误会", "hook": "录像里出现周叙不该出现的身影", "beats": ["查看录像", "指控升级", "记者失联", "反咬一口"]},
+				{"episode_number": 4, "title": "公开处刑", "goal": "把主角推入低谷", "hook": "女主被全网指为伪造证据", "beats": ["舆论爆发", "律所停职", "男主追查", "发现幕后推手"]},
+				{"episode_number": 5, "title": "反击夜", "goal": "主角重新结盟", "hook": "真凶以为赢定时被反钓鱼", "beats": ["坦白旧伤", "布局引蛇出洞", "拿到原始硬盘", "真相逼近"]},
+				{"episode_number": 6, "title": "第七天", "goal": "收束案件与关系", "hook": "法庭上出现决定婚姻走向的新证词", "beats": ["最终对峙", "事故真相", "情感选择", "留下余味"]},
+			]
 			return json.dumps(
 				{
-					"episode_plans": [
-						{"episode_number": 1, "title": "匿名证据", "goal": "强开场并建立合作关系", "hook": "离婚协议旁边出现命案照片", "beats": ["签字前夜", "匿名短信", "旧案重现", "被迫联手"]},
-						{"episode_number": 2, "title": "旧友回场", "goal": "扩大谜团并加压关系", "hook": "关键记者带来被删改的视频", "beats": ["找记者", "发现剪辑痕迹", "互相猜疑", "新线索出现"]},
-						{"episode_number": 3, "title": "半段录像", "goal": "制造重大误会", "hook": "录像里出现周叙不该出现的身影", "beats": ["查看录像", "指控升级", "记者失联", "反咬一口"]},
-						{"episode_number": 4, "title": "公开处刑", "goal": "把主角推入低谷", "hook": "女主被全网指为伪造证据", "beats": ["舆论爆发", "律所停职", "男主追查", "发现幕后推手"]},
-						{"episode_number": 5, "title": "反击夜", "goal": "主角重新结盟", "hook": "真凶以为赢定时被反钓鱼", "beats": ["坦白旧伤", "布局引蛇出洞", "拿到原始硬盘", "真相逼近"]},
-						{"episode_number": 6, "title": "第七天", "goal": "收束案件与关系", "hook": "法庭上出现决定婚姻走向的新证词", "beats": ["最终对峙", "事故真相", "情感选择", "留下余味"]},
-					]
+					"episode_plans": base_plans[:num_episodes]
 				},
 				ensure_ascii=False,
 			)

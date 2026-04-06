@@ -1,7 +1,9 @@
 import json
+
 import typer
 from rich import print
-from .service import GenerateRequest, run_pipeline
+
+from .service import GenerateRequest, persist_story, run_pipeline
 
 
 app = typer.Typer(add_completion=False)
@@ -24,6 +26,16 @@ def generate(
 			mock=mock,
 		)
 	)
+	story_id = persist_story(
+		GenerateRequest(
+			topic=topic,
+			constraints=constraints,
+			num_episodes=num_episodes,
+			max_iterations=max_iterations,
+			mock=mock,
+		),
+		state,
+	)
 
 	print("\n[bold green]最佳创意[/bold green]\n")
 	if state.selected_idea:
@@ -44,6 +56,7 @@ def generate(
 	for i, ep in enumerate(state.episodes, start=1):
 		print(f"\n[bold]第{i}集[/bold]\n")
 		print(ep)
+	print(f"\n[bold cyan]已保存到历史库[/bold cyan] story_id={story_id}")
 
 
 if __name__ == "__main__":

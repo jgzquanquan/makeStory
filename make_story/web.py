@@ -6,12 +6,13 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .service import (
 	GenerateRequest,
 	initial_progress_stages,
 	load_runtime_config,
+	persist_story,
 	ModelTestResult,
 	presets_as_json,
 	ProgressEvent,
@@ -20,6 +21,7 @@ from .service import (
 	serialize_state,
 	test_model_connection,
 )
+from .db import delete_story, get_story, init_db, list_stories
 
 
 WEB_DIR = Path(__file__).resolve().parent / "webapp"
@@ -104,7 +106,10 @@ def finish_job(job_id: str, result: dict | None = None, error: str = "") -> None
 def run_job(job_id: str, request: GenerateRequest) -> None:
 	try:
 		state = run_pipeline(request, progress=lambda event: update_job_stage(job_id, event))
-		finish_job(job_id, result=serialize_state(state))
+		result = serialize_state(state)
+		story_id = persist_story(request, state)
+		result["story_id"] = story_id
+		finish_job(job_id, result=result)
 	except Exception as exc:
 		finish_job(job_id, error=str(exc))
 
@@ -143,6 +148,31 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 
 		if parsed.path == "/api/config":
 			self._send_json(load_runtime_config())
+			return
+
+		if parsed.path == "/api/stories":
+			query = parse_qs(parsed.query)
+			page = int(query.get("page", ["1"])[0])
+			page_size = int(query.get("page_size", ["6"])[0])
+			search = str(query.get("q", [""])[0])
+			self._send_json(
+				{
+					"ok": True,
+					**list_stories(page=page, page_size=page_size, query=search),
+				}
+			)
+			return
+
+		if parsed.path.startswith("/api/stories/"):
+			story_id = parsed.path.rsplit("/", 1)[-1]
+			if not story_id.isdigit():
+				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
+				return
+			story = get_story(int(story_id))
+			if story is None:
+				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
+				return
+			self._send_json({"ok": True, "story": story})
 			return
 
 		if parsed.path.startswith("/api/jobs/"):
@@ -206,8 +236,25 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 
 		self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
+	def do_DELETE(self) -> None:
+		parsed = urlparse(self.path)
+		if parsed.path.startswith("/api/stories/"):
+			story_id = parsed.path.rsplit("/", 1)[-1]
+			if not story_id.isdigit():
+				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
+				return
+			deleted = delete_story(int(story_id))
+			if not deleted:
+				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
+				return
+			self._send_json({"ok": True})
+			return
+
+		self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
 
 def main() -> None:
+	init_db()
 	parser = argparse.ArgumentParser(description="makeStory Web 控制台")
 	parser.add_argument("--host", default="127.0.0.1")
 	parser.add_argument("--port", type=int, default=8000)
