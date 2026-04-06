@@ -26,10 +26,17 @@ from .db import delete_story, get_story, init_db, list_stories, restore_story, u
 
 WEB_DIR = Path(__file__).resolve().parent / "webapp"
 INDEX_HTML = WEB_DIR / "index.html"
+SESSION_TOKEN = uuid.uuid4().hex
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 JOB_TTL_SECONDS = 60 * 30
 MAX_JOBS = 40
+CONTENT_TYPES = {
+	".html": "text/html; charset=utf-8",
+	".js": "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".json": "application/json; charset=utf-8",
+}
 
 
 def prune_jobs() -> None:
@@ -131,19 +138,54 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 		self.end_headers()
 		self.wfile.write(body)
 
+	def _send_bytes(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
+		self.send_response(status)
+		self.send_header("Content-Type", content_type)
+		self.send_header("Content-Length", str(len(body)))
+		self.end_headers()
+		self.wfile.write(body)
+
 	def _read_json_body(self) -> dict:
 		length = int(self.headers.get("Content-Length", "0"))
 		raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
 		return json.loads(raw or "{}")
+
+	def _require_story_session(self) -> bool:
+		token = self.headers.get("X-Storyroom-Session", "")
+		if token != SESSION_TOKEN:
+			self._send_json({"error": "Invalid session"}, status=HTTPStatus.FORBIDDEN)
+			return False
+		return True
+
+	def _send_static_file(self, raw_path: str) -> bool:
+		relative = raw_path.removeprefix("/static/").strip("/")
+		if not relative:
+			return False
+		file_path = (WEB_DIR / relative).resolve()
+		if WEB_DIR.resolve() not in file_path.parents or not file_path.is_file():
+			return False
+		content_type = CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+		self._send_bytes(file_path.read_bytes(), content_type)
+		return True
 
 	def do_GET(self) -> None:
 		parsed = urlparse(self.path)
 		if parsed.path == "/":
 			config = load_runtime_config()
 			html = INDEX_HTML.read_text(encoding="utf-8")
-			html = html.replace("__TOPIC_PRESETS__", presets_as_json())
-			html = html.replace("__RUNTIME_CONFIG__", json.dumps(config, ensure_ascii=False))
+			bootstrap = {
+				"topicPresets": json.loads(presets_as_json()),
+				"runtimeConfig": config,
+				"sessionToken": SESSION_TOKEN,
+			}
+			html = html.replace("__APP_BOOTSTRAP__", json.dumps(bootstrap, ensure_ascii=False))
 			self._send_html(html)
+			return
+
+		if parsed.path.startswith("/static/"):
+			if self._send_static_file(parsed.path):
+				return
+			self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 			return
 
 		if parsed.path == "/api/config":
@@ -151,6 +193,8 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			return
 
 		if parsed.path == "/api/stories":
+			if not self._require_story_session():
+				return
 			query = parse_qs(parsed.query)
 			page = int(query.get("page", ["1"])[0])
 			page_size = int(query.get("page_size", ["6"])[0])
@@ -165,6 +209,8 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			return
 
 		if parsed.path.startswith("/api/stories/"):
+			if not self._require_story_session():
+				return
 			story_id = parsed.path.rsplit("/", 1)[-1]
 			if not story_id.isdigit():
 				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
@@ -236,6 +282,8 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			return
 
 		if parsed.path.startswith("/api/stories/") and parsed.path.endswith("/restore"):
+			if not self._require_story_session():
+				return
 			story_id = parsed.path.removesuffix("/restore").rsplit("/", 1)[-1]
 			if not story_id.isdigit():
 				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
@@ -248,6 +296,8 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			return
 
 		if parsed.path.startswith("/api/stories/") and parsed.path.endswith("/meta"):
+			if not self._require_story_session():
+				return
 			story_id = parsed.path.removesuffix("/meta").rsplit("/", 1)[-1]
 			if not story_id.isdigit():
 				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
@@ -270,6 +320,8 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 	def do_DELETE(self) -> None:
 		parsed = urlparse(self.path)
 		if parsed.path.startswith("/api/stories/"):
+			if not self._require_story_session():
+				return
 			story_id = parsed.path.rsplit("/", 1)[-1]
 			if not story_id.isdigit():
 				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
