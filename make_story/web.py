@@ -21,7 +21,7 @@ from .service import (
 	serialize_state,
 	test_model_connection,
 )
-from .db import delete_story, get_story, init_db, list_stories
+from .db import delete_story, get_story, init_db, list_stories, restore_story
 
 
 WEB_DIR = Path(__file__).resolve().parent / "webapp"
@@ -155,10 +155,11 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			page = int(query.get("page", ["1"])[0])
 			page_size = int(query.get("page_size", ["6"])[0])
 			search = str(query.get("q", [""])[0])
+			sort = str(query.get("sort", ["created_desc"])[0])
 			self._send_json(
 				{
 					"ok": True,
-					**list_stories(page=page, page_size=page_size, query=search),
+					**list_stories(page=page, page_size=page_size, query=search, sort=sort),
 				}
 			)
 			return
@@ -234,6 +235,18 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			self._send_json({"ok": True, "result": result.model_dump()})
 			return
 
+		if parsed.path.startswith("/api/stories/") and parsed.path.endswith("/restore"):
+			story_id = parsed.path.removesuffix("/restore").rsplit("/", 1)[-1]
+			if not story_id.isdigit():
+				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
+				return
+			restored = restore_story(int(story_id))
+			if not restored:
+				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
+				return
+			self._send_json({"ok": True})
+			return
+
 		self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
 	def do_DELETE(self) -> None:
@@ -243,11 +256,15 @@ class StoryWebHandler(BaseHTTPRequestHandler):
 			if not story_id.isdigit():
 				self._send_json({"error": "Invalid story id"}, status=HTTPStatus.BAD_REQUEST)
 				return
+			story = get_story(int(story_id))
+			if story is None:
+				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
+				return
 			deleted = delete_story(int(story_id))
 			if not deleted:
 				self._send_json({"error": "Story not found"}, status=HTTPStatus.NOT_FOUND)
 				return
-			self._send_json({"ok": True})
+			self._send_json({"ok": True, "story": story})
 			return
 
 		self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)

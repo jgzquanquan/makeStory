@@ -513,6 +513,10 @@
       min-width: 0;
     }
 
+    .history-sort {
+      min-width: 160px;
+    }
+
     .history-list {
       display: grid;
       gap: 10px;
@@ -551,6 +555,20 @@
       gap: 8px;
       margin-top: 12px;
       flex-wrap: wrap;
+    }
+
+    .undo-banner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(203, 122, 43, 0.12);
+      border: 1px solid rgba(203, 122, 43, 0.18);
+      color: #6f4615;
     }
 
     .ghost {
@@ -755,6 +773,12 @@
             <div class="history-toolbar">
               <div class="history-search">
                 <input id="historySearchInput" placeholder="按剧本标题搜索">
+                <select id="historySortSelect" class="history-sort">
+                  <option value="created_desc">最新创建</option>
+                  <option value="created_asc">最早创建</option>
+                  <option value="title_asc">标题 A-Z</option>
+                  <option value="title_desc">标题 Z-A</option>
+                </select>
                 <button id="searchHistoryBtn" class="secondary">搜索</button>
                 <button id="clearHistorySearchBtn" class="ghost">清空</button>
               </div>
@@ -763,6 +787,7 @@
                 <button id="refreshHistoryBtn" class="secondary">刷新历史</button>
               </div>
             </div>
+            <div id="undoBanner"></div>
             <div id="historyList" class="history-list">
               <div class="empty">还没有历史剧本。</div>
             </div>
@@ -808,14 +833,19 @@
     const historySummaryEl = document.getElementById("historySummary");
     const historyPageInfoEl = document.getElementById("historyPageInfo");
     const historySearchInput = document.getElementById("historySearchInput");
+    const historySortSelect = document.getElementById("historySortSelect");
+    const undoBannerEl = document.getElementById("undoBanner");
 
     let activeJobId = null;
     let pollTimer = null;
     let historyPage = 1;
     let historyTotalPages = 1;
     let historyQuery = "";
+    let historySort = "created_desc";
     let activeStoryId = null;
     let activeEpisodeIndex = 0;
+    let pendingDeletedStory = null;
+    let undoTimer = null;
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
@@ -966,8 +996,9 @@
         deleteButton.addEventListener("click", async () => {
           const storyId = Number(deleteButton.dataset.storyId || 0);
           if (!storyId) return;
-          if (!window.confirm(`确认删除《${story.title || "未命名剧本"}》吗？`)) return;
+          if (!window.confirm(`确认删除《${story.title || "未命名剧本"}》吗？删除后可在短时间内撤销。`)) return;
           try {
+            pendingDeletedStory = story;
             await deleteStory(storyId);
           } catch (error) {
             setStatus(error.message, true);
@@ -1145,6 +1176,13 @@
       }
     }
 
+    function clearUndoTimer() {
+      if (undoTimer) {
+        clearTimeout(undoTimer);
+        undoTimer = null;
+      }
+    }
+
     function escapeHtml(text) {
       return String(text)
         .replaceAll("&", "&amp;")
@@ -1161,10 +1199,34 @@
       return date.toLocaleString("zh-CN", { hour12: false });
     }
 
-    async function loadHistory(page = 1, query = historyQuery) {
+    function renderUndoBanner() {
+      if (!pendingDeletedStory) {
+        undoBannerEl.innerHTML = "";
+        return;
+      }
+      undoBannerEl.innerHTML = `
+        <div class="undo-banner">
+          <span>《${escapeHtml(pendingDeletedStory.title || "未命名剧本")}》已移入删除缓冲区，可立即撤销。</span>
+          <button id="undoDeleteBtn" class="secondary">撤销删除</button>
+        </div>
+      `;
+      const undoButton = document.getElementById("undoDeleteBtn");
+      if (undoButton) {
+        undoButton.addEventListener("click", async () => {
+          try {
+            await restoreDeletedStory();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+      }
+    }
+
+    async function loadHistory(page = 1, query = historyQuery, sort = historySort) {
       const params = new URLSearchParams({
         page: String(page),
-        page_size: "6"
+        page_size: "6",
+        sort: sort
       });
       if (query && query.trim()) {
         params.set("q", query.trim());
@@ -1174,6 +1236,8 @@
       if (!resp.ok) {
         throw new Error(data.error || "加载历史失败");
       }
+      historySort = data && data.sort ? data.sort : sort;
+      historySortSelect.value = historySort;
       renderHistoryList(data);
       return data;
     }
@@ -1187,7 +1251,7 @@
       activeStoryId = storyId;
       activeEpisodeIndex = 0;
       renderStoryDetail(data.story);
-      await loadHistory(historyPage);
+      await loadHistory(historyPage, historyQuery, historySort);
     }
 
     async function deleteStory(storyId) {
@@ -1203,11 +1267,40 @@
         activeEpisodeIndex = 0;
         renderStoryDetail(null);
       }
+      pendingDeletedStory = data.story || pendingDeletedStory;
+      renderUndoBanner();
+      clearUndoTimer();
+      undoTimer = setTimeout(() => {
+        pendingDeletedStory = null;
+        renderUndoBanner();
+        clearUndoTimer();
+      }, 12000);
       const nextPage = historyPage > 1 && historyListEl.querySelectorAll(".history-item").length === 1
         ? historyPage - 1
         : historyPage;
-      await loadHistory(nextPage);
-      setStatus("历史剧本已删除");
+      await loadHistory(nextPage, historyQuery, historySort);
+      setStatus("历史剧本已删除，可在 12 秒内撤销");
+    }
+
+    async function restoreDeletedStory() {
+      if (!pendingDeletedStory || !pendingDeletedStory.id) return;
+      const storyId = pendingDeletedStory.id;
+      const resp = await fetch(`/api/stories/${storyId}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "撤销删除失败");
+      }
+      activeStoryId = storyId;
+      clearUndoTimer();
+      pendingDeletedStory = null;
+      renderUndoBanner();
+      await loadHistory(1, historyQuery, historySort);
+      await loadStoryDetail(storyId);
+      setStatus("已撤销删除");
     }
 
     async function saveConfig() {
@@ -1330,7 +1423,7 @@
 
     document.getElementById("refreshHistoryBtn").addEventListener("click", async () => {
       try {
-        await loadHistory(historyPage, historyQuery);
+        await loadHistory(historyPage, historyQuery, historySort);
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -1339,7 +1432,7 @@
     document.getElementById("searchHistoryBtn").addEventListener("click", async () => {
       historyQuery = historySearchInput.value.trim();
       try {
-        await loadHistory(1, historyQuery);
+        await loadHistory(1, historyQuery, historySort);
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -1349,7 +1442,16 @@
       historyQuery = "";
       historySearchInput.value = "";
       try {
-        await loadHistory(1, "");
+        await loadHistory(1, "", historySort);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+
+    historySortSelect.addEventListener("change", async () => {
+      historySort = historySortSelect.value || "created_desc";
+      try {
+        await loadHistory(1, historyQuery, historySort);
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -1358,7 +1460,7 @@
     document.getElementById("prevHistoryBtn").addEventListener("click", async () => {
       if (historyPage <= 1) return;
       try {
-        await loadHistory(historyPage - 1, historyQuery);
+        await loadHistory(historyPage - 1, historyQuery, historySort);
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -1367,7 +1469,7 @@
     document.getElementById("nextHistoryBtn").addEventListener("click", async () => {
       if (historyPage >= historyTotalPages) return;
       try {
-        await loadHistory(historyPage + 1, historyQuery);
+        await loadHistory(historyPage + 1, historyQuery, historySort);
       } catch (error) {
         setStatus(error.message, true);
       }

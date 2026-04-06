@@ -8,6 +8,12 @@ from .config import ROOT_DIR
 
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "makestory.sqlite3"
+SORT_OPTIONS = {
+	"created_desc": "ORDER BY datetime(created_at) DESC, id DESC",
+	"created_asc": "ORDER BY datetime(created_at) ASC, id ASC",
+	"title_asc": "ORDER BY title COLLATE NOCASE ASC, id DESC",
+	"title_desc": "ORDER BY title COLLATE NOCASE DESC, id DESC",
+}
 
 
 def get_connection() -> sqlite3.Connection:
@@ -28,6 +34,7 @@ def init_db() -> None:
 				constraints TEXT NOT NULL DEFAULT '',
 				num_episodes INTEGER NOT NULL DEFAULT 0,
 				max_iterations INTEGER NOT NULL DEFAULT 2,
+				deleted_at TEXT DEFAULT NULL,
 				result_json TEXT NOT NULL,
 				created_at TEXT NOT NULL
 			)
@@ -40,6 +47,10 @@ def init_db() -> None:
 		if "max_iterations" not in columns:
 			conn.execute(
 				"ALTER TABLE stories ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 2"
+			)
+		if "deleted_at" not in columns:
+			conn.execute(
+				"ALTER TABLE stories ADD COLUMN deleted_at TEXT DEFAULT NULL"
 			)
 		conn.execute(
 			"CREATE INDEX IF NOT EXISTS idx_stories_created_at ON stories(created_at DESC)"
@@ -86,17 +97,25 @@ def save_story(
 		return int(cursor.lastrowid)
 
 
-def list_stories(page: int = 1, page_size: int = 10, query: str = "") -> dict[str, Any]:
+def list_stories(
+	page: int = 1,
+	page_size: int = 10,
+	query: str = "",
+	sort: str = "created_desc",
+) -> dict[str, Any]:
 	init_db()
 	page = max(1, page)
 	page_size = max(1, min(page_size, 50))
 	offset = (page - 1) * page_size
 	query = query.strip()
-	where_clause = ""
+	sort = sort if sort in SORT_OPTIONS else "created_desc"
+	where_parts = ["deleted_at IS NULL"]
 	params: list[Any] = []
 	if query:
-		where_clause = "WHERE title LIKE ?"
+		where_parts.append("title LIKE ?")
 		params.append(f"%{query}%")
+	where_clause = "WHERE " + " AND ".join(where_parts)
+	order_clause = SORT_OPTIONS[sort]
 
 	with get_connection() as conn:
 		total = int(
@@ -111,8 +130,9 @@ def list_stories(page: int = 1, page_size: int = 10, query: str = "") -> dict[st
 			FROM stories
 			"""
 			+ where_clause
+			+ "\n"
+			+ order_clause
 			+ """
-			ORDER BY datetime(created_at) DESC, id DESC
 			LIMIT ? OFFSET ?
 			""",
 			[*params, page_size, offset],
@@ -135,6 +155,7 @@ def list_stories(page: int = 1, page_size: int = 10, query: str = "") -> dict[st
 		"page": page,
 		"page_size": page_size,
 		"query": query,
+		"sort": sort,
 		"total": total,
 		"total_pages": max(1, (total + page_size - 1) // page_size),
 	}
@@ -147,7 +168,7 @@ def get_story(story_id: int) -> dict[str, Any] | None:
 			"""
 			SELECT id, title, topic, constraints, num_episodes, max_iterations, result_json, created_at
 			FROM stories
-			WHERE id = ?
+			WHERE id = ? AND deleted_at IS NULL
 			""",
 			(story_id,),
 		).fetchone()
@@ -170,6 +191,20 @@ def get_story(story_id: int) -> dict[str, Any] | None:
 
 def delete_story(story_id: int) -> bool:
 	init_db()
+	deleted_at = datetime.now(timezone.utc).isoformat()
 	with get_connection() as conn:
-		cursor = conn.execute("DELETE FROM stories WHERE id = ?", (story_id,))
+		cursor = conn.execute(
+			"UPDATE stories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+			(deleted_at, story_id),
+		)
+		return cursor.rowcount > 0
+
+
+def restore_story(story_id: int) -> bool:
+	init_db()
+	with get_connection() as conn:
+		cursor = conn.execute(
+			"UPDATE stories SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+			(story_id,),
+		)
 		return cursor.rowcount > 0
